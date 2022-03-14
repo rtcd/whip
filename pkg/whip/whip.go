@@ -60,7 +60,7 @@ func NewWHIPConn() (*WHIPConn, error) {
 		log.Printf("Track has started, of type %d: %s \n", track.PayloadType(), track.Codec().MimeType)
 
 		if whip.OnTrack != nil {
-			whip.OnTrack(peerConnection, track, receiver)
+			go whip.OnTrack(peerConnection, track, receiver)
 		}
 	})
 

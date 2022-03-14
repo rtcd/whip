@@ -24,19 +24,19 @@
         integrity="sha384-B4gt1jrGC7Jh4AgTPSdUtOBvfO8shuf57BaghqFfPlYxofvL8/KUEfYiJOMMV+rV"
         crossorigin="anonymous"></script>
     <script src="https://unpkg.com/uuid@latest/dist/umd/uuidv4.min.js"></script>
-    <title>Pion WHIP</title>
+    <title>WHIP to RTMP</title>
 </head>
 
 <body>
     <nav class="navbar navbar-light bg-light border-bottom">
-        <h3>WHIP for Pion</h3>
+        <h3>WHIP to RTMP</h3>
     </nav>
     <div class="container pt-4">
         <div class="row">
             <form>
                 URL: <input type="text" size="25" id="serverurl" name="serverurl" value="http://localhost:8080">
-                /(room) <input type="text" size="15" id="roomid" name="roomid" value="testroom">
-                /(stream) <input type="text" size="15" id="streamid" name="streamid" value="teststream"><br><br>
+                /(room) <input type="text" size="15" id="roomid" name="roomid" value="live">
+                /(stream) <input type="text" size="15" id="streamid" name="streamid" value="test01"><br><br>
             </form>
             <div class="col-12">
                 <button type="button" id="start-btn" class="btn btn-primary" onclick="start()">
@@ -106,7 +106,14 @@
         var pc;
         var streams = {};
 
+        const loadparams = () => {
+            roomid = document.getElementById("roomid").value;
+            streamid = document.getElementById("streamid").value;
+            serverurl = document.getElementById("serverurl").value;
+        }
+
         const start = async () => {
+            loadparams();
 
             let videoElement = document.getElementById('video_container_publish');
             let remoteVideo = document.getElementById('video_container_echo');
@@ -135,7 +142,6 @@
                             remoteStream = stream;
                             streams[stream.id] = remoteVideo;
                         }
-
                     };
                 }
             }

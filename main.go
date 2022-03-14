@@ -12,9 +12,7 @@ import (
 	"github.com/kataras/iris/v12"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
-	"github.com/pion/webrtc/v3/pkg/media"
-	"github.com/pion/webrtc/v3/pkg/media/ivfwriter"
-	"github.com/pion/webrtc/v3/pkg/media/oggwriter"
+	"github.com/rtcd/whip/pkg/gst"
 	"github.com/rtcd/whip/pkg/whip"
 )
 
@@ -23,54 +21,22 @@ var (
 	cert    = ""
 	key     = ""
 	webRoot = "html"
+	rtmpSrv = "localhost"
 
 	listLock sync.RWMutex
 	conns    = make(map[string]*whipState)
 )
 
 type whipState struct {
+	id       string
 	whipConn *whip.WHIPConn
-	oggFile  *oggwriter.OggWriter
-	ivfFile  *ivfwriter.IVFWriter
+	pipeline *gst.Pipeline
 }
 
 func newWhipState(id string, whip *whip.WHIPConn) *whipState {
-
-	oggFile, err := oggwriter.New(id+"_output.ogg", 48000, 2)
-	if err != nil {
-		log.Print(err)
-		return nil
-	}
-	ivfFile, err := ivfwriter.New(id + "_output.ivf")
-	if err != nil {
-		log.Print(err)
-		return nil
-	}
-
 	return &whipState{
+		id:       id,
 		whipConn: whip,
-		oggFile:  oggFile,
-		ivfFile:  ivfFile,
-	}
-}
-
-func saveToDisk(i media.Writer, track *webrtc.TrackRemote) {
-	defer func() {
-		if err := i.Close(); err != nil {
-			log.Print(err)
-		}
-	}()
-
-	for {
-		rtpPacket, _, err := track.ReadRTP()
-		if err != nil {
-			log.Print(err)
-			return
-		}
-		if err := i.WriteRTP(rtpPacket); err != nil {
-			log.Print(err)
-			return
-		}
 	}
 }
 
@@ -88,6 +54,7 @@ func main() {
 	flag.StringVar(&key, "key", "", "key file")
 	flag.StringVar(&addr, "addr", "localhost:8080", "http listening address")
 	flag.StringVar(&webRoot, "web", "html", "html root directory")
+	flag.StringVar(&rtmpSrv, "rtmp", "localhost", "rtmp server address")
 	help := flag.Bool("h", false, "help info")
 	flag.Parse()
 
@@ -109,7 +76,8 @@ func main() {
 		roomId := ctx.Params().Get("room")
 		streamId := ctx.Params().Get("stream")
 		body, _ := ctx.GetBody()
-		log.Printf("Post: roomId => %v, streamId => %v, body = %v", roomId, streamId, string(body))
+		rtmpUrl := "rtmp://" + rtmpSrv + "/" + roomId + "/" + streamId
+		log.Printf("Post: roomId => %v, streamId => %v, body = %v, publish to %v", roomId, streamId, string(body), rtmpUrl)
 		listLock.Lock()
 		defer listLock.Unlock()
 		if _, found := conns[streamId]; !found {
@@ -120,6 +88,9 @@ func main() {
 			}
 
 			state := newWhipState(streamId, whip)
+
+			state.pipeline = gst.CreatePipeline(rtmpUrl)
+			state.pipeline.Start()
 
 			whip.OnTrack = func(pc *webrtc.PeerConnection, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 
@@ -137,33 +108,18 @@ func main() {
 						}
 					}()
 				}
+				mimeType := track.Codec().RTPCodecCapability.MimeType
+				codecType := strings.Split(mimeType, "/")[0]
 
-				codec := track.Codec()
-				if strings.EqualFold(codec.MimeType, webrtc.MimeTypeOpus) {
-					fmt.Println("Got Opus track, saving to disk as " + streamId + "_output.opus (48 kHz, 2 channels)")
-					saveToDisk(state.oggFile, track)
-				} else if strings.EqualFold(codec.MimeType, webrtc.MimeTypeVP8) {
-					fmt.Println("Got VP8 track, saving to disk as " + streamId + "_output.ivf")
-					saveToDisk(state.ivfFile, track)
-				}
-
-				/*
-					buf := make([]byte, 1500)
-					for {
-						_, _, err := track.Read(buf)
-						if err != nil {
-							return
-						}
-						// TODO: recv rtp from track.
-
-						if _, err = trackLocal.Write(buf[:i]); err != nil {
-							return
-						}
+				buf := make([]byte, 1500)
+				for {
+					i, _, err := track.Read(buf)
+					if err != nil {
+						return
 					}
-				*/
-
+					state.pipeline.Push(buf[:i], codecType)
+				}
 			}
-
 			conns[streamId] = state
 			answer, _ := whip.Offer(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: string(body)})
 			log.Printf("post: answer => %v", answer.SDP)
@@ -200,6 +156,7 @@ func main() {
 		defer listLock.Unlock()
 		if state, found := conns[streamId]; found {
 			state.whipConn.Close()
+			state.pipeline.Stop()
 			delete(conns, streamId)
 		}
 		ctx.WriteString("")
