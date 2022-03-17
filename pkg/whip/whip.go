@@ -35,7 +35,8 @@ func NewWHIPConn() (*WHIPConn, error) {
 
 	// Prepare the configuration
 	config := webrtc.Configuration{
-		ICEServers: []webrtc.ICEServer{},
+		ICEServers:   []webrtc.ICEServer{},
+		SDPSemantics: webrtc.SDPSemanticsUnifiedPlanWithFallback,
 	}
 	// Create a new RTCPeerConnection
 	peerConnection, err := api.NewPeerConnection(config)

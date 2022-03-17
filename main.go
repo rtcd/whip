@@ -12,16 +12,19 @@ import (
 	"github.com/kataras/iris/v12"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
-	"github.com/rtcd/whip/pkg/gst"
+	"github.com/rtcd/whip/pkg/gst-sink"
+	gst_sink "github.com/rtcd/whip/pkg/gst-sink"
 	"github.com/rtcd/whip/pkg/whip"
 )
 
 var (
-	addr    = "localhost:8080"
-	cert    = ""
-	key     = ""
-	webRoot = "html"
-	rtmpSrv = "localhost"
+	addr     = ":8080"
+	cert     = ""
+	key      = ""
+	webRoot  = "html"
+	rtmpSrv  = "localhost"
+	vcodec   = "vp8"
+	rtmpmode = "pub"
 
 	listLock sync.RWMutex
 	conns    = make(map[string]*whipState)
@@ -30,7 +33,7 @@ var (
 type whipState struct {
 	id       string
 	whipConn *whip.WHIPConn
-	pipeline *gst.Pipeline
+	pipeline *gst_sink.Pipeline
 }
 
 func newWhipState(id string, whip *whip.WHIPConn) *whipState {
@@ -52,9 +55,11 @@ func showHelp() {
 func main() {
 	flag.StringVar(&cert, "cert", "", "cert file")
 	flag.StringVar(&key, "key", "", "key file")
-	flag.StringVar(&addr, "addr", "localhost:8080", "http listening address")
+	flag.StringVar(&addr, "addr", ":8080", "http listening address")
 	flag.StringVar(&webRoot, "web", "html", "html root directory")
+	flag.StringVar(&rtmpmode, "rtmpmode", "pub", "rtmp mode pub | sub")
 	flag.StringVar(&rtmpSrv, "rtmp", "localhost", "rtmp server address")
+	flag.StringVar(&vcodec, "vcodec", "vp8", "video codec vp8/vp9/h264")
 	help := flag.Bool("h", false, "help info")
 	flag.Parse()
 
@@ -88,8 +93,7 @@ func main() {
 			}
 
 			state := newWhipState(streamId, whip)
-
-			state.pipeline = gst.CreatePipeline(rtmpUrl)
+			state.pipeline = gst.CreatePipeline(rtmpUrl, vcodec)
 			state.pipeline.Start()
 
 			whip.OnTrack = func(pc *webrtc.PeerConnection, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
@@ -121,6 +125,7 @@ func main() {
 				}
 			}
 			conns[streamId] = state
+			log.Printf("post: body => %v", string(body))
 			answer, _ := whip.Offer(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: string(body)})
 			log.Printf("post: answer => %v", answer.SDP)
 			ctx.ContentType("application/sdp")
