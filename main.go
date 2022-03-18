@@ -1,15 +1,18 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/kataras/iris/v12"
+	"github.com/mdp/qrterminal/v3"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 	"github.com/rtcd/whip/pkg/gst-sink"
@@ -41,6 +44,33 @@ func newWhipState(id string, whip *whip.WHIPConn) *whipState {
 		id:       id,
 		whipConn: whip,
 	}
+}
+
+func printQR(url string) {
+	config := qrterminal.Config{
+		Level:     qrterminal.L,
+		Writer:    os.Stdout,
+		BlackChar: qrterminal.BLACK,
+		WhiteChar: qrterminal.WHITE,
+		QuietZone: 1,
+	}
+	fmt.Println("WHIP publish QR Code:")
+	qrterminal.GenerateWithConfig(url, config)
+}
+
+func getClientIp() (string, error) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return "", err
+	}
+	for _, address := range addrs {
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String(), nil
+			}
+		}
+	}
+	return "", errors.New("Can not find the client ip address!")
 }
 
 func showHelp() {
@@ -83,11 +113,15 @@ func main() {
 		body, _ := ctx.GetBody()
 		rtmpUrl := "rtmp://" + rtmpSrv + "/" + roomId + "/" + streamId
 		log.Printf("Post: roomId => %v, streamId => %v, body = %v, publish to %v", roomId, streamId, string(body), rtmpUrl)
+
 		listLock.Lock()
 		defer listLock.Unlock()
+
 		if _, found := conns[streamId]; !found {
 			whip, err := whip.NewWHIPConn()
+
 			if err != nil {
+				ctx.StatusCode(500)
 				ctx.WriteString("failed to create whip conn!")
 				return
 			}
@@ -125,13 +159,21 @@ func main() {
 				}
 			}
 			conns[streamId] = state
-			log.Printf("post: body => %v", string(body))
-			answer, _ := whip.Offer(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: string(body)})
-			log.Printf("post: answer => %v", answer.SDP)
+			log.Printf("got offer => %v", string(body))
+			answer, err := whip.Offer(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: string(body)})
+			if err != nil {
+				ctx.StatusCode(500)
+				ctx.WriteString(fmt.Sprintf("failed to answer whip conn: %v", err))
+				return
+			}
+			log.Printf("send answer => %v", answer.SDP)
 			ctx.ContentType("application/sdp")
+			ctx.StatusCode(201)
 			ctx.WriteString(answer.SDP)
 		} else {
+			ctx.StatusCode(500)
 			ctx.WriteString("stream " + streamId + " already exists")
+			return
 		}
 	})
 
@@ -154,8 +196,7 @@ func main() {
 	app.Delete("/whip/{room}/{stream}", func(ctx iris.Context) {
 		roomId := ctx.Params().Get("room")
 		streamId := ctx.Params().Get("stream")
-		body, _ := ctx.GetBody()
-		log.Printf("Delete: roomId => %v, streamId => %v, body = %v", roomId, streamId, string(body))
+		log.Printf("Delete: roomId => %v, streamId => %v", roomId, streamId)
 
 		listLock.Lock()
 		defer listLock.Unlock()
@@ -163,9 +204,18 @@ func main() {
 			state.whipConn.Close()
 			state.pipeline.Stop()
 			delete(conns, streamId)
+		} else {
+			ctx.StatusCode(500)
+			ctx.WriteString("stream " + streamId + " not found")
+			return
 		}
-		ctx.WriteString("")
+		ctx.StatusCode(200)
+		ctx.WriteString(streamId + " deleted")
 	})
+
+	if localIp, err := getClientIp(); err == nil {
+		printQR("http://" + localIp + addr + "/whip/live/stream1")
+	}
 
 	if cert != "" && key != "" {
 		app.Run(iris.TLS(addr, cert, key), iris.WithoutServerError(iris.ErrServerClosed))

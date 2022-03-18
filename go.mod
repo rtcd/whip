@@ -12,6 +12,7 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kataras/golog v0.1.7 // indirect
 	github.com/kataras/iris/v12 v12.1.8
+	github.com/mdp/qrterminal/v3 v3.0.0
 	github.com/microcosm-cc/bluemonday v1.0.15 // indirect
 	github.com/moul/http2curl v1.0.0 // indirect
 	github.com/pion/interceptor v0.1.0
