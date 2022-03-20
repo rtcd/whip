@@ -72,8 +72,11 @@ func NewWHIPConn() (*WHIPConn, error) {
 	return whip, nil
 }
 
-func (w *WHIPConn) Offer(offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
+func (w *WHIPConn) AddTrack(track webrtc.TrackLocal) (*webrtc.RTPSender, error) {
+	return w.pc.AddTrack(track)
+}
 
+func (w *WHIPConn) Offer(offer webrtc.SessionDescription) (*webrtc.SessionDescription, error) {
 	// Set the remote SessionDescription
 	err := w.pc.SetRemoteDescription(offer)
 	if err != nil {
