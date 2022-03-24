@@ -168,6 +168,7 @@ func main() {
 			log.Printf("send answer => %v", answer.SDP)
 
 			w.Header().Set("Content-Type", "application/sdp")
+			w.Header().Set("Location", "http://localhost:8080"+r.RequestURI)
 			w.WriteHeader(http.StatusCreated)
 			w.Write([]byte(answer.SDP))
 		} else {
