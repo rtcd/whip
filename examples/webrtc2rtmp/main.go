@@ -28,7 +28,7 @@ var (
 	key      = ""
 	webRoot  = "html"
 	rtmpSrv  = "localhost"
-	vcodec   = "vp8"
+	vcodec   = "h264"
 	rtmpmode = "pub"
 
 	listLock sync.RWMutex
@@ -102,7 +102,7 @@ func main() {
 
 	r := mux.NewRouter()
 
-	r.HandleFunc("/whip/{room}/{stream}", func(w http.ResponseWriter, r *http.Request) {
+	r.HandleFunc("/whip/{room}/{stream}/{mode}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		roomId := vars["room"]
 		streamId := vars["stream"]
@@ -176,7 +176,7 @@ func main() {
 			w.Write([]byte("stream " + streamId + " already exists"))
 			return
 		}
-	}).Methods("POST")
+	}).Methods("POST", "GET")
 
 	r.HandleFunc("/whip/{room}/{stream}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
