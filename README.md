@@ -2,7 +2,8 @@
 
 WHIP for go
 
-* Support WHIP to RTMP.
+* Support WebRTC to RTMP.
+* One to many broadcast.
 
 ## Quickstart
 
