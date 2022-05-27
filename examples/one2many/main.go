@@ -27,17 +27,14 @@ type Config struct {
 }
 
 var (
-	conf    Config
-	file    = ""
-	addr    = ":8080"
-	cert    = ""
-	key     = ""
-	webRoot = "html"
-	vcodec  = "vp8"
-
+	conf     Config
+	file     = ""
+	addr     = ":8080"
+	cert     = ""
+	key      = ""
+	webRoot  = "html"
 	listLock sync.RWMutex
-
-	conns = make(map[string]*whipState)
+	conns    = make(map[string]*whipState)
 )
 
 // Add to list of tracks and fire renegotation for all PeerConnections
@@ -151,7 +148,6 @@ func main() {
 	flag.StringVar(&key, "key", "", "key file")
 	flag.StringVar(&addr, "addr", ":8080", "http listening address")
 	flag.StringVar(&webRoot, "web", "html", "html root directory")
-	flag.StringVar(&vcodec, "vcodec", "vp8", "video codec vp8/vp9/h264")
 	help := flag.Bool("h", false, "help info")
 	flag.Parse()
 
