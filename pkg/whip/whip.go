@@ -2,14 +2,100 @@ package whip
 
 import (
 	"log"
+	"net"
 
 	"github.com/pion/interceptor"
+	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 )
+
+type Candidates struct {
+	IceLite    bool     `mapstructure:"icelite"`
+	NAT1To1IPs []string `mapstructure:"nat1to1"`
+}
+
+// ICEServerConfig defines parameters for ice servers
+type ICEServerConfig struct {
+	URLs       []string `mapstructure:"urls"`
+	Username   string   `mapstructure:"username"`
+	Credential string   `mapstructure:"credential"`
+}
+
+// WebRTCConfig defines parameters for ice
+type WebRTCConfig struct {
+	ICESinglePort int               `mapstructure:"singleport"`
+	ICEPortRange  []uint16          `mapstructure:"portrange"`
+	ICEServers    []ICEServerConfig `mapstructure:"iceserver"`
+	Candidates    Candidates        `mapstructure:"candidates"`
+}
+
+// Config for base SFU
+type Config struct {
+	WebRTC WebRTCConfig `mapstructure:"webrtc"`
+}
+
+var (
+	webrtcSettings webrtc.SettingEngine
+)
+
+const (
+	mimeTypeH264 = "video/h264"
+	mimeTypeOpus = "audio/opus"
+	mimeTypeVP8  = "video/vp8"
+	mimeTypeVP9  = "video/vp9"
+	mineTypePCMA = "audio/PCMA"
+)
+
+func Init(c Config) {
+	webrtcSettings = webrtc.SettingEngine{}
+
+	if c.WebRTC.ICESinglePort != 0 {
+		log.Print("Listen on ", "single-port: ", c.WebRTC.ICESinglePort)
+		udpListener, err := net.ListenUDP("udp", &net.UDPAddr{
+			IP:   net.IP{0, 0, 0, 0},
+			Port: c.WebRTC.ICESinglePort,
+		})
+		if err != nil {
+			panic(err)
+		}
+		webrtcSettings.SetICEUDPMux(webrtc.NewICEUDPMux(nil, udpListener))
+	} else {
+		var icePortStart, icePortEnd uint16
+
+		if len(c.WebRTC.ICEPortRange) == 2 {
+			icePortStart = c.WebRTC.ICEPortRange[0]
+			icePortEnd = c.WebRTC.ICEPortRange[1]
+		}
+		if icePortStart != 0 || icePortEnd != 0 {
+			if err := webrtcSettings.SetEphemeralUDPPortRange(icePortStart, icePortEnd); err != nil {
+				panic(err)
+			}
+		}
+	}
+
+	var iceServers []webrtc.ICEServer
+	if c.WebRTC.Candidates.IceLite {
+		webrtcSettings.SetLite(c.WebRTC.Candidates.IceLite)
+	} else {
+		for _, iceServer := range c.WebRTC.ICEServers {
+			s := webrtc.ICEServer{
+				URLs:       iceServer.URLs,
+				Username:   iceServer.Username,
+				Credential: iceServer.Credential,
+			}
+			iceServers = append(iceServers, s)
+		}
+	}
+
+	if len(c.WebRTC.Candidates.NAT1To1IPs) > 0 {
+		webrtcSettings.SetNAT1To1IPs(c.WebRTC.Candidates.NAT1To1IPs, webrtc.ICECandidateTypeHost)
+	}
+}
 
 type WHIPConn struct {
 	pc      *webrtc.PeerConnection
 	OnTrack func(pc *webrtc.PeerConnection, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver)
+	tracks  []*webrtc.TrackRemote
 }
 
 func NewWHIPConn() (*WHIPConn, error) {
@@ -17,7 +103,25 @@ func NewWHIPConn() (*WHIPConn, error) {
 	// Create a MediaEngine object to configure the supported codec
 	m := &webrtc.MediaEngine{}
 
-	m.RegisterDefaultCodecs()
+	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: mineTypePCMA, ClockRate: 8000},
+		PayloadType:        8,
+	}, webrtc.RTPCodecTypeAudio); err != nil {
+		return nil, err
+	}
+
+	videoRTCPFeedback := []webrtc.RTCPFeedback{{"goog-remb", ""}, {"ccm", "fir"}, {"nack", ""}, {"nack", "pli"}}
+
+	for _, codec := range []webrtc.RTPCodecParameters{
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: mimeTypeH264, ClockRate: 90000, SDPFmtpLine: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f", RTCPFeedback: videoRTCPFeedback},
+			PayloadType:        102,
+		},
+	} {
+		if err := m.RegisterCodec(codec, webrtc.RTPCodecTypeVideo); err != nil {
+			return nil, err
+		}
+	}
 
 	// Create a InterceptorRegistry. This is the user configurable RTP/RTCP Pipeline.
 	// This provides NACKs, RTCP Reports and other features. If you use `webrtc.NewPeerConnection`
@@ -31,14 +135,14 @@ func NewWHIPConn() (*WHIPConn, error) {
 	}
 
 	// Create the API object with the MediaEngine
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i))
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithSettingEngine(webrtcSettings), webrtc.WithInterceptorRegistry(i))
 
 	// Prepare the configuration
 	config := webrtc.Configuration{
-		ICEServers:    []webrtc.ICEServer{},
-		SDPSemantics:  webrtc.SDPSemanticsUnifiedPlanWithFallback,
-		RTCPMuxPolicy: webrtc.RTCPMuxPolicyNegotiate,
-		BundlePolicy:  webrtc.BundlePolicyBalanced,
+		ICEServers:   []webrtc.ICEServer{},
+		SDPSemantics: webrtc.SDPSemanticsUnifiedPlanWithFallback,
+		//RTCPMuxPolicy: webrtc.RTCPMuxPolicyRequire,
+		BundlePolicy: webrtc.BundlePolicyBalanced,
 	}
 	// Create a new RTCPeerConnection
 	peerConnection, err := api.NewPeerConnection(config)
@@ -61,7 +165,7 @@ func NewWHIPConn() (*WHIPConn, error) {
 
 	peerConnection.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
 		log.Printf("Track has started, of type %d: %s \n", track.PayloadType(), track.Codec().MimeType)
-
+		whip.tracks = append(whip.tracks, track)
 		if whip.OnTrack != nil {
 			go whip.OnTrack(peerConnection, track, receiver)
 		}
@@ -113,6 +217,18 @@ func (w *WHIPConn) Offer(offer webrtc.SessionDescription) (*webrtc.SessionDescri
 
 func (w *WHIPConn) AddICECandidate(candidate webrtc.ICECandidateInit) error {
 	return w.pc.AddICECandidate(candidate)
+}
+
+func (w *WHIPConn) PictureLossIndication() {
+	for _, track := range w.tracks {
+		if track.Kind() == webrtc.RTPCodecTypeVideo {
+			errSend := w.pc.WriteRTCP([]rtcp.Packet{&rtcp.PictureLossIndication{MediaSSRC: uint32(track.SSRC())}})
+			if errSend != nil {
+				log.Println(errSend)
+				return
+			}
+		}
+	}
 }
 
 func (w *WHIPConn) Close() {

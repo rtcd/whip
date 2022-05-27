@@ -4,9 +4,10 @@ const TEMP = 'flutter-temp-cache';
 const CACHE_NAME = 'flutter-app-cache';
 const RESOURCES = {
   "version.json": "b9782830ca03ae3371abfede37eec523",
-"index.html": "eee5800e732913411b5815ef0d1e158b",
-"/": "eee5800e732913411b5815ef0d1e158b",
-"main.dart.js": "1195c84cefb29783ecae78e82d23c63e",
+"index.html": "e21774ec62d05999e9a8b73e265e06ea",
+"/": "e21774ec62d05999e9a8b73e265e06ea",
+"main.dart.js": "9136732823906bf16bf42417d5348a79",
+"flutter.js": "0816e65a103ba8ba51b174eeeeb2cb67",
 "favicon.png": "5dcef449791fa27946b3d35ad8803796",
 "icons/Icon-192.png": "ac9a721a12bbc803b44f645561ecb1e1",
 "icons/Icon-maskable-192.png": "c457ef57daa1d16f64b27b786ec2ea3c",
@@ -14,7 +15,7 @@ const RESOURCES = {
 "icons/Icon-512.png": "96e752610906ba2a93c65f8abe1645f1",
 "manifest.json": "f1742385a137fa110a99222a07caf806",
 "assets/AssetManifest.json": "f8fc9e1fa5a3fb873ef5566e8c8d9b59",
-"assets/NOTICES": "1e995f22fdcc3fe52e9722382304a972",
+"assets/NOTICES": "700b3507b0ad62c7871121e1468e654a",
 "assets/FontManifest.json": "7aaf3996738086bbd796613e14ef9e45",
 "assets/packages/cupertino_icons/assets/CupertinoIcons.ttf": "6d342eb68f170c97609e9da345464e5e",
 "assets/packages/flutter_icons/fonts/Octicons.ttf": "73b8cff012825060b308d2162f31dbb2",
@@ -33,7 +34,7 @@ const RESOURCES = {
 "assets/packages/flutter_icons/fonts/EvilIcons.ttf": "140c53a7643ea949007aa9a282153849",
 "assets/packages/flutter_icons/fonts/SimpleLineIcons.ttf": "d2285965fe34b05465047401b8595dd0",
 "assets/packages/flutter_icons/fonts/MaterialIcons.ttf": "a37b0c01c0baf1888ca812cc0508f6e2",
-"assets/fonts/MaterialIcons-Regular.otf": "7e7a6cccddf6d7b20012a548461d5d81",
+"assets/fonts/MaterialIcons-Regular.otf": "95db9098c58fd6db106f1116bae85a0b",
 "canvaskit/canvaskit.js": "c2b4e5f3d7a3d82aed024e7249a78487",
 "canvaskit/profiling/canvaskit.js": "ae2949af4efc61d28a4a80fffa1db900",
 "canvaskit/profiling/canvaskit.wasm": "95e736ab31147d1b2c7b25f11d4c32cd",
@@ -43,8 +44,7 @@ const RESOURCES = {
 // The application shell files that are downloaded before a service worker can
 // start.
 const CORE = [
-  "/",
-"main.dart.js",
+  "main.dart.js",
 "index.html",
 "assets/NOTICES",
 "assets/AssetManifest.json",

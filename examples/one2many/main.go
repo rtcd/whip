@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -17,22 +18,30 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 	"github.com/rtcd/whip/pkg/whip"
+	"github.com/spf13/viper"
 )
 
+// Config defines parameters for configuring the sfu instance
+type Config struct {
+	whip.Config `mapstructure:",squash"`
+}
+
 var (
+	conf    Config
+	file    = ""
 	addr    = ":8080"
 	cert    = ""
 	key     = ""
 	webRoot = "html"
 	vcodec  = "vp8"
 
-	listLock    sync.RWMutex
-	trackLocals = make(map[string]*webrtc.TrackLocalStaticRTP)
-	conns       = make(map[string]*whipState)
+	listLock sync.RWMutex
+
+	conns = make(map[string]*whipState)
 )
 
 // Add to list of tracks and fire renegotation for all PeerConnections
-func addTrack(t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP {
+func addTrack(w *whipState, t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP {
 	listLock.Lock()
 	defer func() {
 		listLock.Unlock()
@@ -44,30 +53,26 @@ func addTrack(t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP {
 		panic(err)
 	}
 
-	trackLocals[t.ID()] = trackLocal
+	w.trackLocals[t.ID()] = trackLocal
 	return trackLocal
 }
 
 // Remove from list of tracks and fire renegotation for all PeerConnections
-func removeTrack(t *webrtc.TrackLocalStaticRTP) {
+func removeTrack(w *whipState, t *webrtc.TrackLocalStaticRTP) {
 	listLock.Lock()
 	defer func() {
 		listLock.Unlock()
 	}()
 
-	delete(trackLocals, t.ID())
+	delete(w.trackLocals, t.ID())
 }
 
 type whipState struct {
-	id       string
-	whipConn *whip.WHIPConn
-}
-
-func newWhipState(id string, whip *whip.WHIPConn) *whipState {
-	return &whipState{
-		id:       id,
-		whipConn: whip,
-	}
+	stream      string
+	room        string
+	publish     bool
+	whipConn    *whip.WHIPConn
+	trackLocals map[string]*webrtc.TrackLocalStaticRTP
 }
 
 func printQR(url string) {
@@ -99,6 +104,7 @@ func getClientIp() (string, error) {
 
 func showHelp() {
 	fmt.Printf("Usage:%s {params}\n", os.Args[0])
+	fmt.Println("      -c {config file}")
 	fmt.Println("      -cert {cert file for https}")
 	fmt.Println("      -key {key file for https}")
 	fmt.Println("      -bind {bind listen addr}")
@@ -106,7 +112,41 @@ func showHelp() {
 	fmt.Println("      -h (show help info)")
 }
 
+func load(file string) bool {
+	_, err := os.Stat(file)
+	if err != nil {
+		return false
+	}
+
+	viper.SetConfigFile(file)
+	viper.SetConfigType("toml")
+
+	err = viper.ReadInConfig()
+	if err != nil {
+		log.Print("config file read failed ", err, " file", file)
+		return false
+	}
+	err = viper.GetViper().Unmarshal(&conf)
+	if err != nil {
+		log.Print("sfu config file loaded failed ", err, " file", file)
+		return false
+	}
+	return true
+}
+
+func printWhipState() {
+	log.Printf("State for whip:")
+	for key, conn := range conns {
+		streamType := "\tpublisher"
+		if !conn.publish {
+			streamType = "\tsubscriber"
+		}
+		log.Printf("%v: room: %v, stream: %v, resourceId: [%v]", streamType, conn.room, conn.stream, key)
+	}
+}
+
 func main() {
+	flag.StringVar(&file, "c", "config.toml", "config file")
 	flag.StringVar(&cert, "cert", "", "cert file")
 	flag.StringVar(&key, "key", "", "key file")
 	flag.StringVar(&addr, "addr", ":8080", "http listening address")
@@ -115,10 +155,16 @@ func main() {
 	help := flag.Bool("h", false, "help info")
 	flag.Parse()
 
+	if !load(file) {
+		return
+	}
+
 	if *help {
 		showHelp()
 		return
 	}
+
+	whip.Init(conf.Config)
 
 	r := mux.NewRouter()
 
@@ -136,16 +182,35 @@ func main() {
 		listLock.Lock()
 		defer listLock.Unlock()
 
-		//if _, found := conns[streamId]; !found {
 		whip, err := whip.NewWHIPConn()
 
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("500 - failed to create whip conn!"))
+			msg := "500 - failed to create whip conn!"
+			log.Printf("%v", msg)
+			w.Write([]byte(msg))
 			return
 		}
 
-		state := newWhipState(streamId, whip)
+		if mode == "publish" {
+			for _, wc := range conns {
+				if wc.publish && wc.stream == streamId {
+					w.WriteHeader(http.StatusInternalServerError)
+					msg := "500 - publish conn [" + streamId + "] already exist!"
+					log.Printf("%v", msg)
+					w.Write([]byte(msg))
+					return
+				}
+			}
+		}
+
+		state := &whipState{
+			stream:      streamId,
+			room:        roomId,
+			publish:     mode == "publish",
+			whipConn:    whip,
+			trackLocals: make(map[string]*webrtc.TrackLocalStaticRTP),
+		}
 
 		if mode == "publish" {
 			whip.OnTrack = func(pc *webrtc.PeerConnection, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
@@ -163,9 +228,9 @@ func main() {
 						}
 					}()
 				}
-				// Create a track to fan out our incoming video to all peers
-				trackLocal := addTrack(track)
-				defer removeTrack(trackLocal)
+
+				trackLocal := addTrack(state, track)
+				defer removeTrack(state, trackLocal)
 
 				buf := make([]byte, 1500)
 				for {
@@ -182,32 +247,50 @@ func main() {
 		}
 
 		if mode == "subscribe" {
-			for trackID := range trackLocals {
-				if _, err := whip.AddTrack(trackLocals[trackID]); err != nil {
-					return
+			foundPublish := false
+			for _, wc := range conns {
+				if wc.publish && wc.stream == streamId {
+					for trackID := range wc.trackLocals {
+						if _, err := whip.AddTrack(wc.trackLocals[trackID]); err != nil {
+							return
+						}
+					}
+					go func() {
+						time.Sleep(time.Second * 1)
+						wc.whipConn.PictureLossIndication()
+					}()
+					foundPublish = true
 				}
+			}
+			if !foundPublish {
+				w.WriteHeader(http.StatusInternalServerError)
+				msg := fmt.Sprintf("Not find any publisher for room: %v, stream: %v", roomId, streamId)
+				log.Print(msg)
+				w.Write([]byte(msg))
+				return
 			}
 		}
 
-		conns[streamId] = state
+		uniqueStreamId := mode + "-" + streamId + "-" + RandomString(12)
+
+		conns[uniqueStreamId] = state
 
 		log.Printf("got offer => %v", string(body))
 		answer, err := whip.Offer(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: string(body)})
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte(fmt.Sprintf("failed to answer whip conn: %v", err)))
+			msg := fmt.Sprintf("failed to answer whip conn: %v", err)
+			log.Print(msg)
+			w.Write([]byte(msg))
 			return
 		}
 		log.Printf("send answer => %v", answer.SDP)
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/sdp")
-		w.Header().Set("Location", "http://localhost:8080"+"/whip/"+roomId+"/"+streamId)
+		w.Header().Set("Location", "/whip/"+roomId+"/"+uniqueStreamId)
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(answer.SDP))
-		//} else {
-		//	w.WriteHeader(http.StatusInternalServerError)
-		//	w.Write([]byte("stream " + streamId + " already exists"))
-		//	return
-		//}
+		printWhipState()
 	}).Methods("POST")
 
 	r.HandleFunc("/whip/{room}/{stream}", func(w http.ResponseWriter, r *http.Request) {
@@ -242,9 +325,17 @@ func main() {
 		if state, found := conns[streamId]; found {
 			state.whipConn.Close()
 			delete(conns, streamId)
+			streamType := "publish"
+			if !state.publish {
+				streamType = "subscribe"
+			}
+			log.Printf("%v stream conn removed  %v", streamType, streamId)
+			printWhipState()
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("stream " + streamId + " not found"))
+			msg := "stream " + streamId + " not found"
+			log.Print(msg)
+			w.Write([]byte(msg))
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -252,10 +343,7 @@ func main() {
 	}).Methods("DELETE")
 
 	r.PathPrefix("/").Handler(http.StripPrefix("/", http.FileServer(http.Dir(webRoot))))
-	/*
-		if localIp, err := getClientIp(); err == nil {
-			printQR("http://" + localIp + addr + "/whip/live/stream1")
-		}*/
+	r.Headers("Access-Control-Allow-Origin", "*")
 
 	if cert != "" && key != "" {
 		if e := http.ListenAndServeTLS(addr, cert, key, r); e != nil {
@@ -266,4 +354,15 @@ func main() {
 			log.Fatal("ListenAndServe: ", e)
 		}
 	}
+}
+
+var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
+
+func RandomString(n int) string {
+	rand.Seed(time.Now().UnixNano())
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = letterRunes[rand.Intn(len(letterRunes))]
+	}
+	return string(b)
 }

@@ -16,5 +16,14 @@
                 "PKG_CONFIG_PATH": "/usr/local/lib/pkgconfig"
             },
         },
+        {
+            "name": "one-to-many",
+            "type": "go",
+            "request": "launch",
+            "mode": "auto",
+            "program": "${workspaceFolder}/examples/one2many/main.go",
+            "cwd": "${workspaceFolder}",
+            "args": [],
+        },
     ]
 }
