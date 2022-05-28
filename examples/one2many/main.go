@@ -1,27 +1,23 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
+	"github.com/rtcd/whip/pkg/util"
 	"io/ioutil"
 	"log"
-	"math/rand"
-	"net"
 	"net/http"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/mdp/qrterminal/v3"
 	"github.com/pion/rtcp"
 	"github.com/pion/webrtc/v3"
 	"github.com/rtcd/whip/pkg/whip"
 	"github.com/spf13/viper"
 )
 
-// Config defines parameters for configuring the sfu instance
 type Config struct {
 	whip.Config `mapstructure:",squash"`
 }
@@ -37,7 +33,6 @@ var (
 	conns    = make(map[string]*whipState)
 )
 
-// Add to list of tracks and fire renegotation for all PeerConnections
 func addTrack(w *whipState, t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP {
 	listLock.Lock()
 	defer func() {
@@ -50,53 +45,25 @@ func addTrack(w *whipState, t *webrtc.TrackRemote) *webrtc.TrackLocalStaticRTP {
 		panic(err)
 	}
 
-	w.trackLocals[t.ID()] = trackLocal
+	w.pubTracks[t.ID()] = trackLocal
 	return trackLocal
 }
 
-// Remove from list of tracks and fire renegotation for all PeerConnections
 func removeTrack(w *whipState, t *webrtc.TrackLocalStaticRTP) {
 	listLock.Lock()
 	defer func() {
 		listLock.Unlock()
 	}()
 
-	delete(w.trackLocals, t.ID())
+	delete(w.pubTracks, t.ID())
 }
 
 type whipState struct {
-	stream      string
-	room        string
-	publish     bool
-	whipConn    *whip.WHIPConn
-	trackLocals map[string]*webrtc.TrackLocalStaticRTP
-}
-
-func printQR(url string) {
-	config := qrterminal.Config{
-		Level:     qrterminal.L,
-		Writer:    os.Stdout,
-		BlackChar: qrterminal.BLACK,
-		WhiteChar: qrterminal.WHITE,
-		QuietZone: 1,
-	}
-	fmt.Println("WHIP publish QR Code:")
-	qrterminal.GenerateWithConfig(url, config)
-}
-
-func getClientIp() (string, error) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "", err
-	}
-	for _, address := range addrs {
-		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String(), nil
-			}
-		}
-	}
-	return "", errors.New("Can not find the client ip address!")
+	stream    string
+	room      string
+	publish   bool
+	whipConn  *whip.WHIPConn
+	pubTracks map[string]*webrtc.TrackLocalStaticRTP
 }
 
 func showHelp() {
@@ -125,7 +92,7 @@ func load(file string) bool {
 	}
 	err = viper.GetViper().Unmarshal(&conf)
 	if err != nil {
-		log.Print("sfu config file loaded failed ", err, " file", file)
+		log.Print("whip config file loaded failed ", err, " file", file)
 		return false
 	}
 	return true
@@ -201,11 +168,11 @@ func main() {
 		}
 
 		state := &whipState{
-			stream:      streamId,
-			room:        roomId,
-			publish:     mode == "publish",
-			whipConn:    whip,
-			trackLocals: make(map[string]*webrtc.TrackLocalStaticRTP),
+			stream:    streamId,
+			room:      roomId,
+			publish:   mode == "publish",
+			whipConn:  whip,
+			pubTracks: make(map[string]*webrtc.TrackLocalStaticRTP),
 		}
 
 		if mode == "publish" {
@@ -225,8 +192,8 @@ func main() {
 					}()
 				}
 
-				trackLocal := addTrack(state, track)
-				defer removeTrack(state, trackLocal)
+				pubTrack := addTrack(state, track)
+				defer removeTrack(state, pubTrack)
 
 				buf := make([]byte, 1500)
 				for {
@@ -235,7 +202,7 @@ func main() {
 						return
 					}
 
-					if _, err = trackLocal.Write(buf[:i]); err != nil {
+					if _, err = pubTrack.Write(buf[:i]); err != nil {
 						return
 					}
 				}
@@ -246,8 +213,8 @@ func main() {
 			foundPublish := false
 			for _, wc := range conns {
 				if wc.publish && wc.stream == streamId {
-					for trackID := range wc.trackLocals {
-						if _, err := whip.AddTrack(wc.trackLocals[trackID]); err != nil {
+					for trackID := range wc.pubTracks {
+						if _, err := whip.AddTrack(wc.pubTracks[trackID]); err != nil {
 							return
 						}
 					}
@@ -267,9 +234,9 @@ func main() {
 			}
 		}
 
-		uniqueStreamId := mode + "-" + streamId + "-" + RandomString(12)
+		uniqueResourceId := mode + "-" + streamId + "-" + util.RandomString(12)
 
-		conns[uniqueStreamId] = state
+		conns[uniqueResourceId] = state
 
 		log.Printf("got offer => %v", string(body))
 		answer, err := whip.Offer(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: string(body)})
@@ -283,7 +250,7 @@ func main() {
 		log.Printf("send answer => %v", answer.SDP)
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/sdp")
-		w.Header().Set("Location", "/whip/"+roomId+"/"+uniqueStreamId)
+		w.Header().Set("Location", "/whip/"+roomId+"/"+uniqueResourceId)
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(answer.SDP))
 		printWhipState()
@@ -350,15 +317,4 @@ func main() {
 			log.Fatal("ListenAndServe: ", e)
 		}
 	}
-}
-
-var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890")
-
-func RandomString(n int) string {
-	rand.Seed(time.Now().UnixNano())
-	b := make([]rune, n)
-	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
-	}
-	return string(b)
 }
