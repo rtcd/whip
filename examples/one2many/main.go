@@ -131,7 +131,7 @@ func main() {
 
 	r := mux.NewRouter()
 
-	r.HandleFunc("/whip/{room}/{stream}/{mode}", func(w http.ResponseWriter, r *http.Request) {
+	r.HandleFunc("/whip/{mode}/{room}/{stream}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		roomId := vars["room"]
 		streamId := vars["stream"]

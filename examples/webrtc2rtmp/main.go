@@ -102,7 +102,7 @@ func main() {
 
 	r := mux.NewRouter()
 
-	r.HandleFunc("/whip/{room}/{stream}/{mode}", func(w http.ResponseWriter, r *http.Request) {
+	r.HandleFunc("/whip/{mode}/{room}/{stream}", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		roomId := vars["room"]
 		streamId := vars["stream"]
@@ -225,7 +225,8 @@ func main() {
 	/*
 		if localIp, err := getClientIp(); err == nil {
 			printQR("http://" + localIp + addr + "/whip/live/stream1")
-		}*/
+		}
+	*/
 
 	if cert != "" && key != "" {
 		if e := http.ListenAndServeTLS(addr, cert, key, r); e != nil {
