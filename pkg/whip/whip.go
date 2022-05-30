@@ -93,9 +93,10 @@ func Init(c Config) {
 }
 
 type WHIPConn struct {
-	pc      *webrtc.PeerConnection
-	OnTrack func(pc *webrtc.PeerConnection, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver)
-	tracks  []*webrtc.TrackRemote
+	pc                      *webrtc.PeerConnection
+	OnTrack                 func(pc *webrtc.PeerConnection, track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver)
+	OnConnectionStateChange func(s webrtc.PeerConnectionState)
+	tracks                  []*webrtc.TrackRemote
 }
 
 func NewWHIPConn() (*WHIPConn, error) {
@@ -173,6 +174,9 @@ func NewWHIPConn() (*WHIPConn, error) {
 
 	peerConnection.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		log.Printf("Peer Connection State has changed: %s\n", s.String())
+		if whip.OnConnectionStateChange != nil {
+			go whip.OnConnectionStateChange(s)
+		}
 	})
 
 	return whip, nil

@@ -253,6 +253,22 @@ func main() {
 		w.Header().Set("Location", "/whip/"+roomId+"/"+uniqueResourceId)
 		w.WriteHeader(http.StatusCreated)
 		w.Write([]byte(answer.SDP))
+
+		whip.OnConnectionStateChange = func(state webrtc.PeerConnectionState) {
+			if state == webrtc.PeerConnectionStateClosed {
+				listLock.Lock()
+				defer listLock.Unlock()
+				if state, found := conns[uniqueResourceId]; found {
+					state.whipConn.Close()
+					delete(conns, uniqueResourceId)
+					streamType := "publish"
+					if !state.publish {
+						streamType = "subscribe"
+					}
+					log.Printf("%v stream conn removed  %v", streamType, streamId)
+				}
+			}
+		}
 		printWhipState()
 	}).Methods("POST")
 
