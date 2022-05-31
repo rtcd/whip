@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/rtcd/whip/pkg/util"
 	"io/ioutil"
 	"log"
 	"net"
@@ -157,7 +158,9 @@ func main() {
 					state.pipeline.Push(buf[:i], codecType)
 				}
 			}
-			conns[streamId] = state
+			uniqueResourceId := streamId + "-" + util.RandomString(12)
+
+			conns[uniqueResourceId] = state
 			log.Printf("got offer => %v", string(body))
 			answer, err := whip.Offer(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: string(body)})
 			if err != nil {
@@ -168,9 +171,21 @@ func main() {
 			log.Printf("send answer => %v", answer.SDP)
 
 			w.Header().Set("Content-Type", "application/sdp")
-			w.Header().Set("Location", "http://localhost:8080"+r.RequestURI)
+			w.Header().Set("Location", "/whip/"+roomId+"/"+uniqueResourceId)
 			w.WriteHeader(http.StatusCreated)
 			w.Write([]byte(answer.SDP))
+
+			whip.OnConnectionStateChange = func(state webrtc.PeerConnectionState) {
+				if state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateDisconnected {
+					listLock.Lock()
+					defer listLock.Unlock()
+					if state, found := conns[uniqueResourceId]; found {
+						state.whipConn.Close()
+						delete(conns, uniqueResourceId)
+						log.Printf("%v stream conn removed", streamId)
+					}
+				}
+			}
 		} else {
 			w.WriteHeader(http.StatusInternalServerError)
 			w.Write([]byte("stream " + streamId + " already exists"))

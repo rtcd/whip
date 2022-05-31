@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/rtcd/whip/pkg/util"
@@ -255,7 +256,7 @@ func main() {
 		w.Write([]byte(answer.SDP))
 
 		whip.OnConnectionStateChange = func(state webrtc.PeerConnectionState) {
-			if state == webrtc.PeerConnectionStateClosed {
+			if state == webrtc.PeerConnectionStateClosed || state == webrtc.PeerConnectionStateFailed || state == webrtc.PeerConnectionStateDisconnected {
 				listLock.Lock()
 				defer listLock.Unlock()
 				if state, found := conns[uniqueResourceId]; found {
@@ -320,6 +321,29 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(streamId + " deleted"))
 	}).Methods("DELETE")
+
+	r.HandleFunc("/whip/list", func(w http.ResponseWriter, r *http.Request) {
+		listLock.Lock()
+		defer listLock.Unlock()
+		var list []map[string]interface{}
+		for key, item := range conns {
+			details := make(map[string]interface{})
+
+			connType := "publish"
+			if !item.publish {
+				connType = "subscribe"
+			}
+			details["path"] = item.room + "/" + item.stream
+			details["type"] = connType
+			details["uniqueID"] = key
+			details["room"] = item.room
+			details["stream"] = item.stream
+			list = append(list, details)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(list)
+	}).Methods("GET")
 
 	r.PathPrefix("/").Handler(http.StripPrefix("/", http.FileServer(http.Dir(webRoot))))
 	r.Headers("Access-Control-Allow-Origin", "*")
