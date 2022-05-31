@@ -1,6 +1,4 @@
-# whip
-
-WHIP for go
+# WebRTC-HTTP ingestion protocol (WHIP) for Go
 
 * Support WebRTC to RTMP.
 * One to many broadcast.
